@@ -1,58 +1,72 @@
-import subprocess
 import os
-import requests
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy.exc import IntegrityError
+from datetime import datetime
+from telegram import Update
+from telegram.ext import Updater, CommandHandler, CallbackContext
 
-# Configuration for the Telegram Bot
-BOT_TOKEN = 'your_telegram_bot_token'  # Replace with your actual Telegram Bot Token
-CHAT_ID = 'your_chat_id'  # Replace with your actual Telegram Chat ID
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///iptv.db'
+db = SQLAlchemy(app)
 
-# Directory to save the recordings
+# Define the directory where recordings will be saved
 RECORDINGS_DIR = 'recordings'
+
+# Ensure the RECORDINGS_DIR exists
 if not os.path.exists(RECORDINGS_DIR):
-    os.makedirs(RECORDINGS_DIR')
+    os.makedirs(RECORDINGS_DIR)
 
-def record_m3u8(url, duration, filename):
-    # Define the full path for the recording
-    recording_path = os.path.join(RECORDINGS_DIR, filename)
-    
-    # Command to start the recording
-    command = [
-        'ffmpeg',
-        '-i', url,
-        '-t', duration,
-        '-c', 'copy',
-        recording_path
-    ]
-    # Run the command to record the stream
-    subprocess.run(command)
-    print(f"Recording saved as {recording_path}")
+# Define the database model
+class Record(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(100), unique=True, nullable=False)
+    url = db.Column(db.String(200), unique=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-def upload_to_telegram(filename):
-    upload_url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendDocument"
-    with open(filename, 'rb') as f:
-        files = {'document': f}
-        data = {'chat_id': CHAT_ID}
-        response = requests.post(upload_url, files=files, data=data)
-    if response.ok:
-        print(f"Upload Successful! Response: {response.json()}")
-    else:
-        print(f"Upload Failed! Response: {response.text}")
+    def __repr__(self):
+        return f'<Record {self.title}>'
 
-def main():
-    import argparse
+# Define the routes
+@app.route('/add', methods=['POST'])
+def add_record():
+    data = request.get_json()
+    title = data.get('title')
+    url = data.get('url')
     
-    parser = argparse.ArgumentParser(description='Record a live M3U8 stream and upload it to Telegram.')
-    parser.add_argument('url', type=str, help='M3U8 stream URL')
-    parser.add_argument('duration', type=str, help='Recording duration in HH:MM:SS format')
-    parser.add_argument('filename', type=str, help='Name of the file to save')
+    if not title or not url:
+        return jsonify({'error': 'Title and URL are required'}), 400
     
-    args = parser.parse_args()
+    new_record = Record(title=title, url=url)
+    try:
+        db.session.add(new_record)
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify({'error': 'Record with this title or URL already exists'}), 400
     
-    # Record the M3U8 stream
-    record_m3u8(args.url, args.duration, os.path.join(RECORDINGS_DIR, args.filename))
-    
-    # Upload the recorded file to Telegram
-    upload_to_telegram(os.path.join(RECORDINGS_DIR, args.filename))
+    return jsonify({'message': 'Record added successfully'}), 201
 
-if name == 'main':
-    main()
+@app.route('/list', methods=['GET'])
+def list_records():
+    records = Record.query.all()
+    return jsonify([{'id': r.id, 'title': r.title, 'url': r.url, 'created_at': r.created_at} for r in records]), 200
+
+# Define the bot token and updater
+BOT_TOKEN = '7439562089:AAGNK5J1avMZLtD-KMOkd3yyiFRiMTBIS48'
+updater = Updater(token=BOT_TOKEN, use_context=True)
+
+# Define the /token command handler
+def token_command(update: Update, context: CallbackContext):
+    update.message.reply_text(f'The bot token is: {BOT_TOKEN}')
+
+# Add the /token command to the dispatcher
+dispatcher = updater.dispatcher
+dispatcher.add_handler(CommandHandler('token', token_command))
+
+# Start the bot
+updater.start_polling()
+
+if __name__ == '__main__':
+    db.create_all()
+    app.run(debug=True)
