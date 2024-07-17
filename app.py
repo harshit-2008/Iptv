@@ -61,10 +61,13 @@ async def record(update: Update, context: CallbackContext) -> None:
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
+    # Define filter for m3u8 document
+    m3u8_filter = filters.Document.MIME_TYPE['application/vnd.apple.mpegurl']
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("record", record))
-    application.add_handler(MessageHandler(filters.Document.MIME_TYPE["application/vnd.apple.mpegurl"], record))
-    application.add_handler(MessageHandler(filters.Text & ~filters.COMMAND, record))
+    application.add_handler(MessageHandler(m3u8_filter, record))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, record))
 
     application.run_polling()
 
