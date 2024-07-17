@@ -1,72 +1,74 @@
-import os
-from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.exc import IntegrityError
-from datetime import datetime
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, CallbackContext
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+import requests
+import re
 
-app = Flask(__name__)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///iptv.db'
-db = SQLAlchemy(app)
-
-# Define the directory where recordings will be saved
-RECORDINGS_DIR = 'recordings'
-
-# Ensure the RECORDINGS_DIR exists
-if not os.path.exists(RECORDINGS_DIR):
-    os.makedirs(RECORDINGS_DIR)
-
-# Define the database model
-class Record(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    title = db.Column(db.String(100), unique=True, nullable=False)
-    url = db.Column(db.String(200), unique=True, nullable=False)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-    def __repr__(self):
-        return f'<Record {self.title}>'
-
-# Define the routes
-@app.route('/add', methods=['POST'])
-def add_record():
-    data = request.get_json()
-    title = data.get('title')
-    url = data.get('url')
-    
-    if not title or not url:
-        return jsonify({'error': 'Title and URL are required'}), 400
-    
-    new_record = Record(title=title, url=url)
-    try:
-        db.session.add(new_record)
-        db.session.commit()
-    except IntegrityError:
-        db.session.rollback()
-        return jsonify({'error': 'Record with this title or URL already exists'}), 400
-    
-    return jsonify({'message': 'Record added successfully'}), 201
-
-@app.route('/list', methods=['GET'])
-def list_records():
-    records = Record.query.all()
-    return jsonify([{'id': r.id, 'title': r.title, 'url': r.url, 'created_at': r.created_at} for r in records]), 200
-
-# Define the bot token and updater
+# Replace 'YOUR_BOT_TOKEN' with the token you got from BotFather
 BOT_TOKEN = '7439562089:AAGNK5J1avMZLtD-KMOkd3yyiFRiMTBIS48'
-updater = Updater(token=BOT_TOKEN, use_context=True)
 
-# Define the /token command handler
-def token_command(update: Update, context: CallbackContext):
-    update.message.reply_text(f'The bot token is: {BOT_TOKEN}')
+def start(update: Update, context: CallbackContext) -> None:
+    update.message.reply_text("Send me an m3u8 playlist file or URL with the /record command, and I'll provide the duration of the media segments.")
 
-# Add the /token command to the dispatcher
-dispatcher = updater.dispatcher
-dispatcher.add_handler(CommandHandler('token', token_command))
+def record(update: Update, context: CallbackContext) -> None:
+    if len(context.args) == 0:
+        update.message.reply_text("Please provide an m3u8 file or URL.")
+        return
 
-# Start the bot
-updater.start_polling()
+    input_data = context.args[0]
+
+    if input_data.startswith('http'):
+        response = requests.get(input_data)
+        if response.status_code == 200:
+            with open('playlist.m3u8', 'w') as f:
+                f.write(response.text)
+        else:
+            update.message.reply_text("Failed to fetch the playlist from the URL.")
+            return
+    else:
+        # Handle file upload
+        if update.message.document:
+            file = update.message.document.get_file()
+            file.download('playlist.m3u8')
+        else:
+            update.message.reply_text("Please provide a valid m3u8 URL or upload an m3u8 file.")
+            return
+
+    # Read the .m3u8 file
+    with open('playlist.m3u8', 'r') as f:
+        content = f.read()
+
+    # Extracting media durations
+    pattern = re.compile(r'#EXTINF:(\d+(\.\d+)?),.*?(\d+(\.\d+)?),')
+    matches = pattern.findall(content)
+
+    if not matches:
+        update.message.reply_text("No media segments found in the playlist.")
+        return
+
+    # Calculating the total duration
+    duration_sum = 0
+    for match in matches:
+        duration_sum += float(match[0])
+
+    # Formatting the duration
+    hours, remainder = divmod(duration_sum, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    duration_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
+
+    caption = f"Total duration of media segments: {duration_str}"
+    update.message.reply_text(caption)
+
+def main():
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CommandHandler("record", record))
+    dp.add_handler(MessageHandler(Filters.document.mime_type("application/vnd.apple.mpegurl"), record))
+    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, record))
+
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == '__main__':
-    db.create_all()
-    app.run(debug=True)
+    main()
