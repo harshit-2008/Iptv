@@ -1,17 +1,17 @@
 from telegram import Update
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackContext
 import requests
 import re
 
 # Replace 'YOUR_BOT_TOKEN' with the token you got from BotFather
 BOT_TOKEN = '7439562089:AAGNK5J1avMZLtD-KMOkd3yyiFRiMTBIS48'
 
-def start(update: Update, context: CallbackContext) -> None:
-    update.message.reply_text("Send me an m3u8 playlist file or URL with the /record command, and I'll provide the duration of the media segments.")
+async def start(update: Update, context: CallbackContext) -> None:
+    await update.message.reply_text("Send me an m3u8 playlist file or URL with the /record command, and I'll provide the duration of the media segments.")
 
-def record(update: Update, context: CallbackContext) -> None:
+async def record(update: Update, context: CallbackContext) -> None:
     if len(context.args) == 0:
-        update.message.reply_text("Please provide an m3u8 file or URL.")
+        await update.message.reply_text("Please provide an m3u8 file or URL.")
         return
 
     input_data = context.args[0]
@@ -22,15 +22,15 @@ def record(update: Update, context: CallbackContext) -> None:
             with open('playlist.m3u8', 'w') as f:
                 f.write(response.text)
         else:
-            update.message.reply_text("Failed to fetch the playlist from the URL.")
+            await update.message.reply_text("Failed to fetch the playlist from the URL.")
             return
     else:
         # Handle file upload
         if update.message.document:
             file = update.message.document.get_file()
-            file.download('playlist.m3u8')
+            await file.download('playlist.m3u8')
         else:
-            update.message.reply_text("Please provide a valid m3u8 URL or upload an m3u8 file.")
+            await update.message.reply_text("Please provide a valid m3u8 URL or upload an m3u8 file.")
             return
 
     # Read the .m3u8 file
@@ -42,7 +42,7 @@ def record(update: Update, context: CallbackContext) -> None:
     matches = pattern.findall(content)
 
     if not matches:
-        update.message.reply_text("No media segments found in the playlist.")
+        await update.message.reply_text("No media segments found in the playlist.")
         return
 
     # Calculating the total duration
@@ -56,19 +56,18 @@ def record(update: Update, context: CallbackContext) -> None:
     duration_str = f"{int(hours):02}:{int(minutes):02}:{int(seconds):02}"
 
     caption = f"Total duration of media segments: {duration_str}"
-    update.message.reply_text(caption)
+    await update.message.reply_text(caption)
 
 def main():
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
+    application = Application.builder().token(BOT_TOKEN).build()
 
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("record", record))
-    dp.add_handler(MessageHandler(Filters.document.mime_type("application/vnd.apple.mpegurl"), record))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, record))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("record", record))
+    application.add_handler(MessageHandler(filters.Document.MIME_TYPE["application/vnd.apple.mpegurl"], record))
+    application.add_handler(MessageHandler(filters.Text & ~filters.COMMAND, record))
 
-    updater.start_polling()
-    updater.idle()
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
+    
