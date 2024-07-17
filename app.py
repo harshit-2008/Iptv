@@ -62,7 +62,7 @@ def main():
     application = Application.builder().token(BOT_TOKEN).build()
 
     # Define filter for m3u8 document
-    m3u8_filter = filters.Document.MIME_TYPE['application/vnd.apple.mpegurl']
+    m3u8_filter = filters.Document.MIME_TYPE("application/vnd.apple.mpegurl")
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("record", record))
